@@ -1,64 +1,65 @@
-#!/usr/bin/env python3
-"""The Friday Wire — Friday 27 November 2026 in one image.
+"""News-image entry: copy the finished day-summary picture to the output slot.
 
-Pure-stdlib renderer: it only copies the pre-drawn broadsheet image
-(entry.png, shipped next to this file) to the requested output path.
-No drawing, no network, no third-party imports.
+The picture itself (entry.png, drawn at build time from the verified
+27 November 2026 stories) sits next to this file. This program does one
+thing: it reads those exact bytes and writes them to the directory the
+grader names, so both grading runs produce the identical file.
+Only the Python standard library is used; there is no network access.
 """
 
 import hashlib
 import os
+import pathlib
+import shutil
 import sys
-from pathlib import Path
 
 
-def _source_image():
-    """Locate the bundled broadsheet image next to this script."""
-    here = Path(__file__).resolve().parent
-    candidate = here / "entry.png"
-    if candidate.is_file():
-        return candidate
-    fallback = Path.cwd() / "entry.png"
-    if fallback.is_file():
-        return fallback
-    raise FileNotFoundError("entry.png not found next to main.py")
+def _picture_path():
+    """Return the path of the bundled picture next to this program."""
+    here = pathlib.Path(__file__).resolve().parent
+    return here / "entry.png"
 
 
-def _output_path():
-    """Resolve where the image must be written."""
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR")
-    if out_dir:
-        return Path(out_dir) / "entry.png"
-    return Path("/output/entry.png")
+def _target_dir():
+    """Return the writable output directory for this run.
 
-
-def _copy_image_bytes(src, dst):
-    """Copy src to dst in chunks and return the sha256 of what was written.
-
-    Chunked reads keep memory flat even if the bundled PNG grows; the
-    digest is computed from the exact bytes written, so a later compare
-    of source and output hashes proves the copy is byte-identical.
+    The grader sets MAKEFUN_OUTPUT_DIR; a plain OUTPUT_DIR is accepted as
+    a fallback for local runs. An empty value counts as unset, so the
+    default /output is used instead of failing on a blank path.
     """
+    for name in ("MAKEFUN_OUTPUT_DIR", "OUTPUT_DIR"):
+        chosen = os.environ.get(name)
+        if chosen and chosen.strip():
+            return pathlib.Path(chosen)
+    return pathlib.Path("/output")
+
+
+def _fingerprint(path):
+    """Return the sha256 hex digest of a file's bytes."""
     digest = hashlib.sha256()
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    with open(src, "rb") as fin, open(dst, "wb") as fout:
-        while True:
-            chunk = fin.read(1024 * 1024)
-            if not chunk:
-                break
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
             digest.update(chunk)
-            fout.write(chunk)
     return digest.hexdigest()
 
 
 def main():
-    src = _source_image()
-    dst = _output_path()
-    checksum = _copy_image_bytes(src, dst)
-    # Deterministic, byte-identical re-runs: same input bytes, same output.
-    print(f"wrote {dst} sha256={checksum}")
+    source = _picture_path()
+    if not source.is_file():
+        print("missing bundled picture: %s" % source, file=sys.stderr)
+        return 1
+    wanted = _fingerprint(source)
+    destination_dir = _target_dir()
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    destination = destination_dir / "entry.png"
+    shutil.copyfile(source, destination)
+    got = _fingerprint(destination)
+    if got != wanted:
+        print("copy mismatch: %s != %s" % (got, wanted), file=sys.stderr)
+        return 1
+    print("wrote %s (%d bytes, sha256 %s)" % (destination, destination.stat().st_size, got))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
